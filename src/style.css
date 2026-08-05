@@ -40,6 +40,9 @@ body { font-family: "Avenir Next", "Segoe UI", system-ui, sans-serif; color: #e8
 #btn-action { position: absolute; right: 30px; bottom: calc(38px + env(safe-area-inset-bottom)); width: 96px; height: 96px; border-radius: 50%; border: none; font: inherit; font-weight: 800; font-size: 17px; letter-spacing: 0.1em; color: #2a1200; background: radial-gradient(circle at 35% 30%, #ffd75c, #ff8c2e); box-shadow: 0 0 24px rgba(255, 160, 50, 0.5), 0 5px 0 rgba(120, 50, 0, 0.85); pointer-events: auto; cursor: pointer; }
 #btn-action:active { transform: translateY(4px); box-shadow: 0 0 30px rgba(255, 160, 50, 0.7), 0 1px 0 rgba(120, 50, 0, 0.85); }
 
+#fade { position: absolute; inset: 0; background: #000; opacity: 0; pointer-events: none; transition: opacity 0.5s ease; }
+#fade.show { opacity: 1; }
+
 @media (min-width: 900px) and (hover: hover) {
   #joystick { opacity: 0.35; }
 }

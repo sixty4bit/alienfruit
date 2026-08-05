@@ -180,7 +180,17 @@ const fruitMats = TIERS.map(
   (t) => new THREE.MeshLambertMaterial({ color: t.fruit, emissive: t.fruit, emissiveIntensity: 0.75 })
 );
 
-const trees = new Map(); // "cx,cz" -> { group, x, z, r, tier, fruits, hp, cut }
+const trees = new Map(); // "cx,cz" -> { group, x, z, r, tier, fruits, cut, dmg, ... }
+const felled = new Map(); // "cx,cz" -> game time when felled (stump until regrow)
+const REGROW_S = 120;
+const stumpGeo = new THREE.CylinderGeometry(0.26, 0.4, 0.5, 7);
+
+function spawnStump(x, z, key) {
+  const stump = new THREE.Mesh(stumpGeo, trunkMat);
+  stump.position.set(x, 0.25, z);
+  scene.add(stump);
+  trees.set(key, { group: stump, x, z, r: Math.hypot(x, z), tier: 0, fruits: [], cut: true, dmg: 0, sway: 0 });
+}
 
 function treeAtCell(cx, cz) {
   if (hash2(cx, cz, 1) > 0.74) return null;
@@ -195,6 +205,10 @@ function spawnTree(cx, cz, key) {
   const spot = treeAtCell(cx, cz);
   if (!spot) return;
   const { x, z, r } = spot;
+  if (felled.has(key)) {
+    spawnStump(x, z, key);
+    return;
+  }
   const tier = tierAt(r);
   const h1 = hash2(cx, cz, 4), h2 = hash2(cx, cz, 6);
   const height = 2.6 + h1 * 1.8 + tier * 0.35;
@@ -216,7 +230,7 @@ function spawnTree(cx, cz, key) {
   // Fruit: ~60% of trees carry 1-4 glowing fruits tucked in the canopy.
   const fruits = [];
   const fh = hash2(cx, cz, 7);
-  const nFruit = fh < 0.4 ? 0 : 1 + Math.floor(hash2(cx, cz, 8) * 4);
+  const nFruit = fh < 0.25 ? 0 : 1 + Math.floor(hash2(cx, cz, 8) * 4);
   for (let i = 0; i < nFruit; i++) {
     const a = hash2(cx + i, cz, 9) * Math.PI * 2;
     const rr = cs * (0.55 + hash2(cx, cz + i, 10) * 0.45);
@@ -234,7 +248,11 @@ function spawnTree(cx, cz, key) {
   }
 
   scene.add(group);
-  trees.set(key, { group, x, z, r, tier, fruits, hp: 1 + tier, cut: false, sway: h2 * 10 });
+  // hpS: seconds of sawing (at saw power 1) to fell this tree.
+  trees.set(key, {
+    group, x, z, r, tier, fruits, cut: false, sway: h2 * 10,
+    key, height, dmg: 0, hpS: 1.4 + tier * 1.5 + h1 * 0.6, falling: null,
+  });
 }
 
 function updateTreeField(px, pz) {
@@ -244,6 +262,12 @@ function updateTreeField(px, pz) {
     for (let dz = minC; dz <= maxC; dz++) {
       const cx = pcx + dx, cz = pcz + dz;
       const key = cx + "," + cz;
+      const f = felled.get(key);
+      if (f !== undefined && gameTime - f > REGROW_S) {
+        felled.delete(key);
+        const stump = trees.get(key);
+        if (stump && stump.cut) { scene.remove(stump.group); trees.delete(key); }
+      }
       if (trees.has(key)) continue;
       const wx = cx * CELL + CELL / 2, wz = cz * CELL + CELL / 2;
       if (Math.hypot(wx - px, wz - pz) < SPAWN_R) spawnTree(cx, cz, key);
@@ -365,8 +389,15 @@ const input = { x: 0, z: 0, action: false };
       input.x = kx / len;
       input.z = kz / len;
     }
-    input.action = !!keys.Space;
+    input.keyAction = !!keys.Space;
   }
+
+  const btn = $("btn-action");
+  btn.addEventListener("pointerdown", (e) => { e.preventDefault(); input.btnAction = true; });
+  const btnUp = () => { input.btnAction = false; };
+  btn.addEventListener("pointerup", btnUp);
+  btn.addEventListener("pointercancel", btnUp);
+  btn.addEventListener("pointerleave", btnUp);
 }
 
 // ---------- Game state ----------
@@ -374,6 +405,32 @@ const state = {
   mode: "title",
   speed: 4.6,
   facing: 0,
+  battery: 100,
+  batteryMax: 100,
+  basket: [],       // array of { value, tier }
+  basketCap: 10,
+  money: 0,
+  sawPower: 1,
+  hintedSaw: false,
+};
+let gameTime = 0;
+window.GAME = state; // debug/test handle
+window.GAME_POS = () => ({ x: player.position.x, z: player.position.z });
+window.DIAG = () => {
+  let best = null, bestD = 1e9;
+  for (const t of trees.values()) {
+    if (t.cut) continue;
+    const d = Math.hypot(t.x - player.position.x, t.z - player.position.z);
+    if (d < bestD) { bestD = d; best = t; }
+  }
+  return {
+    px: +player.position.x.toFixed(1), pz: +player.position.z.toFixed(1),
+    nearD: +bestD.toFixed(2), dmg: best ? +best.dmg.toFixed(2) : null,
+    hpS: best ? +best.hpS.toFixed(2) : null, fruits: best ? best.fruits.length : null,
+    keyAction: input.keyAction, btnAction: input.btnAction,
+    basket: state.basket.length, battery: Math.round(state.battery),
+    flying: flying.length, fallingN: falling.length,
+  };
 };
 
 $("btn-start").addEventListener("click", () => {
@@ -425,14 +482,240 @@ function updateCamera(dt, snap) {
 updateCamera(0, true);
 updateTreeField(player.position.x, player.position.z);
 
+// ---------- Saw progress ring ----------
+const ringGroup = new THREE.Group();
+const ringBg = new THREE.Mesh(
+  new THREE.RingGeometry(0.55, 0.78, 28),
+  new THREE.MeshBasicMaterial({ color: 0x1a1030, transparent: true, opacity: 0.65, side: THREE.DoubleSide, depthTest: false })
+);
+ringGroup.add(ringBg);
+let ringFg = null, ringShownProgress = -1;
+ringGroup.visible = false;
+scene.add(ringGroup);
+
+function showRing(tree, progress) {
+  ringGroup.visible = true;
+  ringGroup.position.set(tree.x, tree.height + 2.2, tree.z);
+  ringGroup.quaternion.copy(camera.quaternion);
+  if (Math.abs(progress - ringShownProgress) > 0.02) {
+    if (ringFg) {
+      ringGroup.remove(ringFg);
+      ringFg.geometry.dispose();
+    }
+    ringFg = new THREE.Mesh(
+      new THREE.RingGeometry(0.55, 0.78, 28, 1, Math.PI / 2, -progress * Math.PI * 2),
+      new THREE.MeshBasicMaterial({ color: 0xffb040, transparent: true, opacity: 0.95, side: THREE.DoubleSide, depthTest: false })
+    );
+    ringGroup.add(ringFg);
+    ringShownProgress = progress;
+  }
+}
+
+// ---------- Saw sparks ----------
+const sparks = [];
+function spawnSpark(x, y, z, color) {
+  const s = new THREE.Sprite(
+    new THREE.SpriteMaterial({ map: glowTex, color, transparent: true, opacity: 0.9, depthWrite: false })
+  );
+  s.scale.set(0.5, 0.5, 1);
+  s.position.set(x, y, z);
+  s.userData.vel = new THREE.Vector3((Math.random() - 0.5) * 3, Math.random() * 2.5 + 1, (Math.random() - 0.5) * 3);
+  s.userData.life = 0.5;
+  scene.add(s);
+  sparks.push(s);
+}
+function updateSparks(dt) {
+  for (let i = sparks.length - 1; i >= 0; i--) {
+    const s = sparks[i];
+    s.userData.life -= dt;
+    if (s.userData.life <= 0) {
+      scene.remove(s);
+      sparks.splice(i, 1);
+      continue;
+    }
+    s.userData.vel.y -= 6 * dt;
+    s.position.addScaledVector(s.userData.vel, dt);
+    s.material.opacity = s.userData.life * 1.8;
+  }
+}
+
+// ---------- Flying fruit (tree -> basket) ----------
+const flying = [];
+function launchFruit(fruit, tree) {
+  const world = new THREE.Vector3();
+  fruit.getWorldPosition(world);
+  tree.group.remove(fruit);
+  fruit.position.copy(world);
+  scene.add(fruit);
+  flying.push({ mesh: fruit, t: 0, dur: 0.65 + Math.random() * 0.35, from: world.clone(), tier: tree.tier });
+}
+function updateFlying(dt) {
+  for (let i = flying.length - 1; i >= 0; i--) {
+    const f = flying[i];
+    f.t += dt;
+    const k = Math.min(f.t / f.dur, 1);
+    const target = new THREE.Vector3(player.position.x, player.position.y + 1.2, player.position.z - 0.3);
+    f.mesh.position.lerpVectors(f.from, target, k * k);
+    f.mesh.position.y += Math.sin(k * Math.PI) * 2.2;
+    f.mesh.scale.setScalar(Math.max(0.25, 1 - k * 0.6));
+    if (k >= 1) {
+      scene.remove(f.mesh);
+      flying.splice(i, 1);
+      if (state.basket.length < state.basketCap) {
+        state.basket.push({ value: TIERS[f.tier].value, tier: f.tier });
+        if (state.basket.length === state.basketCap) showMsg("Basket full — haul it back to the ship!");
+      } else {
+        showMsg("Basket overflowing — that one got away.");
+      }
+      updateHUD();
+    }
+  }
+}
+
+// ---------- Falling trees ----------
+const falling = [];
+function fellTree(tree) {
+  tree.cut = true;
+  felled.set(tree.key, gameTime);
+  ringGroup.visible = false;
+  for (const fruit of [...tree.fruits]) launchFruit(fruit, tree);
+  tree.fruits = [];
+  const away = new THREE.Vector3(tree.x - player.position.x, 0, tree.z - player.position.z).normalize();
+  falling.push({ tree, t: 0, axis: new THREE.Vector3(-away.z, 0, away.x), done: false });
+}
+function updateFalling(dt) {
+  for (let i = falling.length - 1; i >= 0; i--) {
+    const f = falling[i];
+    f.t += dt;
+    if (f.t < 1.0) {
+      const k = f.t / 1.0;
+      f.tree.group.setRotationFromAxisAngle(f.axis, -k * k * (Math.PI / 2 - 0.1));
+    } else if (f.t < 1.45) {
+      const k = (f.t - 1.0) / 0.45;
+      f.tree.group.scale.setScalar(Math.max(0.001, 1 - k));
+    } else {
+      scene.remove(f.tree.group);
+      const key = f.tree.key;
+      trees.delete(key);
+      spawnStump(f.tree.x, f.tree.z, key);
+      falling.splice(i, 1);
+    }
+  }
+}
+
+// ---------- HUD ----------
+function updateHUD() {
+  const b = state.battery / state.batteryMax;
+  const bf = document.querySelector("#meter-battery .meter-fill");
+  bf.style.transform = `scaleX(${b})`;
+  bf.style.background = b < 0.25 ? "linear-gradient(90deg,#ff4040,#ff8040)" : "linear-gradient(90deg,#38e8b0,#b7ff5c)";
+  document.querySelector("#meter-battery .meter-label").textContent = `⚡ ${Math.ceil(state.battery)}%`;
+  document.querySelector("#meter-basket .meter-fill").style.transform = `scaleX(${state.basket.length / state.basketCap})`;
+  document.querySelector("#meter-basket .meter-label").textContent = `🧺 ${state.basket.length}/${state.basketCap}`;
+  $("hud-money").textContent = `₡ ${state.money}`;
+}
+
+// ---------- Ship zone: sell + recharge ----------
+let wasAtShip = false;
+function updateShipZone(dt) {
+  const atShip = Math.hypot(player.position.x, player.position.z) < 7;
+  if (atShip) {
+    if (state.battery < state.batteryMax) {
+      state.battery = Math.min(state.batteryMax, state.battery + 20 * dt);
+      updateHUD();
+    }
+    if (!wasAtShip && state.basket.length > 0) {
+      const total = state.basket.reduce((s, f) => s + f.value, 0);
+      state.money += total;
+      showMsg(`Sold ${state.basket.length} fruit for ₡${total}. The Corp thanks you. Sort of.`);
+      state.basket = [];
+      updateHUD();
+    }
+  }
+  wasAtShip = atShip;
+}
+
+// ---------- Battery + emergency recall ----------
+let recalling = false;
+function drainBattery(amount) {
+  state.battery = Math.max(0, state.battery - amount);
+  if (state.battery <= 0 && !recalling) emergencyRecall();
+}
+function emergencyRecall() {
+  recalling = true;
+  const lost = Math.ceil(state.basket.length * 0.35);
+  $("fade").classList.add("show");
+  showMsg("SUIT DEAD. Tow drone dispatched… (recovery fee: " + lost + " fruit)", 4200);
+  setTimeout(() => {
+    player.position.set(0, 0, 6.5);
+    state.basket.splice(0, lost);
+    state.battery = state.batteryMax * 0.3;
+    updateCamera(0, true);
+    updateTreeField(0, 6.5);
+    updateHUD();
+    $("fade").classList.remove("show");
+    recalling = false;
+  }, 1400);
+}
+
+// ---------- Sawing ----------
+function nearestTree() {
+  let best = null, bestD = 2.7;
+  for (const t of trees.values()) {
+    if (t.cut) continue;
+    const d = Math.hypot(t.x - player.position.x, t.z - player.position.z);
+    if (d < bestD) { bestD = d; best = t; }
+  }
+  return best;
+}
+
+let sawTarget = null;
+function updateSaw(dt) {
+  const target = recalling ? null : nearestTree();
+  const btn = $("btn-action");
+  btn.classList.toggle("hidden", !target);
+  if (target && !state.hintedSaw) {
+    state.hintedSaw = true;
+    showMsg("Hold SAW (or Space) to cut the tree — the fruit is yours.");
+  }
+  const sawing = target && (input.btnAction || input.keyAction) && state.battery > 0;
+  if (sawing) {
+    // Face the tree while cutting.
+    state.facing = Math.atan2(target.x - player.position.x, target.z - player.position.z);
+    target.dmg += dt * state.sawPower;
+    drainBattery(dt * 2.8);
+    blade.rotation.x += dt * 30;
+    const mid = new THREE.Vector3(
+      player.position.x + (target.x - player.position.x) * 0.55,
+      0.9,
+      player.position.z + (target.z - player.position.z) * 0.55
+    );
+    if (Math.random() < 0.55) spawnSpark(mid.x, mid.y, mid.z, 0xffc060);
+    target.group.position.x = target.x + (Math.random() - 0.5) * 0.06;
+    target.group.position.z = target.z + (Math.random() - 0.5) * 0.06;
+    showRing(target, Math.min(target.dmg / target.hpS, 1));
+    if (target.dmg >= target.hpS) fellTree(target);
+    updateHUD();
+  } else {
+    if (sawTarget && sawTarget !== target) {
+      sawTarget.group.position.x = sawTarget.x;
+      sawTarget.group.position.z = sawTarget.z;
+    }
+    if (target && target.dmg > 0) showRing(target, Math.min(target.dmg / target.hpS, 1));
+    else ringGroup.visible = false;
+  }
+  sawTarget = target;
+}
+
 // ---------- Main loop ----------
 const clock = new THREE.Clock();
 function tick() {
   requestAnimationFrame(tick);
   const dt = Math.min(clock.getDelta(), 0.05);
   const t = clock.getElapsedTime();
+  gameTime = t;
 
-  if (state.mode === "play") {
+  if (state.mode === "play" && !recalling) {
     const mx = input.x, mz = input.z;
     const mlen = Math.hypot(mx, mz);
     if (mlen > 0.08) {
@@ -445,9 +728,14 @@ function tick() {
       state.facing = Math.atan2(mx, mz);
       player.position.y = Math.abs(Math.sin(t * 9)) * 0.06;
       updateTreeField(nx, nz);
+      drainBattery(dt * 0.45);
     } else {
       player.position.y *= 0.8;
+      drainBattery(dt * 0.1);
     }
+    updateSaw(dt);
+    updateShipZone(dt);
+    updateHUD();
     const targetRot = state.facing;
     let dr = targetRot - player.rotation.y;
     while (dr > Math.PI) dr -= Math.PI * 2;
@@ -455,6 +743,9 @@ function tick() {
     player.rotation.y += dr * Math.min(1, dt * 12);
     updateCamera(dt, false);
   }
+  updateFlying(dt);
+  updateFalling(dt);
+  updateSparks(dt);
 
   // Idle saw blade spin + tree sway
   blade.rotation.x = t * 3;

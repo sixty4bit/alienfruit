@@ -45,3 +45,24 @@ saw arm with idle-spinning blade). Virtual joystick (pointer events, capture, 44
 (0, 27, 14.5) — roughly 6 trees visible in each direction. Ambient spores drift and wrap
 in a box around the player. Verified in headless Chromium: no console errors,
 movement + tree streaming confirmed by screenshot at phone + desktop sizes.
+
+## 2026-08-05 — Core harvest loop
+
+Sawing: nearest standing tree within 2.7u becomes the target; SAW button (touch) or
+Space engages. Damage accrues (persists per tree), orange progress ring floats over the
+canopy (billboarded RingGeometry, rebuilt on >2% change), sparks fly, the tree shakes,
+blade spins up. At full damage the tree topples away from the player (axis-angle),
+shrink-pops, leaves a stump. Stumps regrow into trees after 120s (felled map keyed by
+cell, deterministic with world streaming).
+
+Fruit detaches on the fell and arcs into the backpack basket (lerp + sine hop, ~0.7s).
+Basket capacity 10; overflow fruit is lost with a message. At the ship (r<7): basket
+auto-sells on arrival (fruit value by tier), battery recharges 20%/s. Battery drains
+0.1/s idle, 0.45/s walking, 2.8/s sawing; at 0 an emergency tow fades the screen,
+returns you to the ship, taxes 35% of the basket, restores 30% charge.
+
+Balance pass after headless playtest: saw range 2.1→2.7 (kept losing target after a
+fell), fruitless trees 40%→25% (first felled tree having no fruit felt bad), ship
+service zone 5.5→7 (clearing-edge trees made the sale zone annoying to enter).
+Verified full loop headless: saw → 3 fruit → walk back (with steering around trees;
+head-on tree collision is a hard stop by design) → auto-sale ₡12 → recharge to 100%.
