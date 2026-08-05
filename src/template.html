@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<title>ALIEN FRUIT</title>
+<style>
+/*__CSS__*/
+</style>
+</head>
+<body>
+<div id="game-root">
+  <canvas id="game-canvas"></canvas>
+
+  <div id="title-screen">
+    <div id="title-art"></div>
+    <div id="title-content">
+      <div id="title-corp">XENOHARVEST CORP. FIELD ASSIGNMENT #4471</div>
+      <h1 id="title-name"><span>ALIEN</span><span>FRUIT</span></h1>
+      <div id="title-tag">The fruit is glowing. Your quota is not optional.</div>
+      <button id="btn-start">BEGIN HARVEST</button>
+      <div id="title-hint">joystick to move &middot; hold button to saw</div>
+    </div>
+  </div>
+
+  <div id="hud" class="hidden">
+    <div id="hud-top">
+      <div class="meter" id="meter-battery"><div class="meter-fill"></div><span class="meter-label">⚡ 100%</span></div>
+      <div class="meter" id="meter-basket"><div class="meter-fill"></div><span class="meter-label">🧺 0/10</span></div>
+      <div id="hud-money">₡ 0</div>
+    </div>
+    <div id="hud-msg"></div>
+    <div id="joystick"><div id="joystick-knob"></div></div>
+    <button id="btn-action" class="hidden">SAW</button>
+  </div>
+
+  <div id="shop" class="hidden"></div>
+</div>
+<script>
+/*__THREE__*/
+</script>
+<script>
+/*__TEXTURES__*/
+</script>
+<script>
+/*__GAME__*/
+</script>
+</body>
+</html>
