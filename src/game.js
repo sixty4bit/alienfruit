@@ -393,7 +393,11 @@ const input = { x: 0, z: 0, action: false };
   }
 
   const btn = $("btn-action");
-  btn.addEventListener("pointerdown", (e) => { e.preventDefault(); input.btnAction = true; });
+  btn.addEventListener("pointerdown", (e) => {
+    e.preventDefault();
+    if (sawTarget) input.btnAction = true;
+    else openShop();
+  });
   const btnUp = () => { input.btnAction = false; };
   btn.addEventListener("pointerup", btnUp);
   btn.addEventListener("pointercancel", btnUp);
@@ -414,6 +418,116 @@ const state = {
   hintedSaw: false,
 };
 let gameTime = 0;
+
+// ---------- Upgrades ----------
+const UPGRADES = {
+  bat:  { icon: "🔋", name: "Battery Cells", vals: [100, 140, 190, 260, 350, 500], costs: [40, 90, 200, 450, 1000],
+          desc: (v) => `${v} charge` },
+  bask: { icon: "🧺", name: "Basket Rig", vals: [10, 14, 19, 26, 35, 50], costs: [30, 70, 160, 360, 800],
+          desc: (v) => `holds ${v} fruit` },
+  saw:  { icon: "🪚", name: "Plasma Saw", vals: [1, 1.5, 2.2, 3.2, 4.5, 6.5], costs: [50, 120, 280, 650, 1500],
+          desc: (v) => `${v}× cut speed` },
+  arm:  { icon: "🛡", name: "Suit Armor", vals: [0, 0.2, 0.35, 0.5, 0.65, 0.8], costs: [40, 100, 240, 560, 1300],
+          desc: (v) => v ? `blocks ${Math.round(v * 100)}% damage` : "no protection" },
+  pul:  { icon: "📡", name: "Sonic Pulser", vals: [0, 1, 2, 3, 4, 5], costs: [60, 140, 320, 750, 1750],
+          desc: (v) => v ? `repels dangers, power ${v}` : "not installed" },
+  env:  { icon: "🌡", name: "Environmental Unit", vals: [0, 1, 2], costs: [250, 1200],
+          desc: (v) => v === 0 ? "temperate zones only" : v === 1 ? "survive the Ember Reach" : "survive The Hush" },
+};
+state.lv = { bat: 0, bask: 0, saw: 0, arm: 0, pul: 0, env: 0 };
+
+function applyLevels() {
+  const keep = state.battery / state.batteryMax;
+  state.batteryMax = UPGRADES.bat.vals[state.lv.bat];
+  state.battery = Math.min(state.batteryMax, Math.max(state.battery, keep * state.batteryMax));
+  state.basketCap = UPGRADES.bask.vals[state.lv.bask];
+  state.sawPower = UPGRADES.saw.vals[state.lv.saw];
+  state.armor = UPGRADES.arm.vals[state.lv.arm];
+  state.pulser = UPGRADES.pul.vals[state.lv.pul];
+  state.envUnit = UPGRADES.env.vals[state.lv.env];
+}
+
+const SAVE_KEY = "alienfruit-save-v1";
+function saveGame() {
+  try {
+    localStorage.setItem(SAVE_KEY, JSON.stringify({ money: state.money, lv: state.lv }));
+  } catch (e) { /* private browsing */ }
+}
+function loadGame() {
+  try {
+    const raw = localStorage.getItem(SAVE_KEY);
+    if (!raw) return;
+    const d = JSON.parse(raw);
+    if (typeof d.money === "number") state.money = d.money;
+    for (const k in state.lv) if (typeof d.lv?.[k] === "number") state.lv[k] = d.lv[k];
+  } catch (e) { /* corrupt save — start fresh */ }
+}
+loadGame();
+applyLevels();
+state.battery = state.batteryMax;
+
+// ---------- Shop ----------
+let shopOpen = false;
+function renderShop() {
+  const rows = Object.entries(UPGRADES).map(([k, u]) => {
+    const lvl = state.lv[k];
+    const maxed = lvl >= u.costs.length;
+    const cost = maxed ? null : u.costs[lvl];
+    const pips = u.costs.map((_, i) => `<i class="${i < lvl ? "on" : ""}"></i>`).join("");
+    const btn = maxed
+      ? `<button class="up-buy maxed" disabled>MAX</button>`
+      : `<button class="up-buy" data-k="${k}" ${state.money < cost ? "disabled" : ""}>₡ ${cost}</button>`;
+    return `<div class="up-row">
+      <div class="up-icon">${u.icon}</div>
+      <div class="up-info">
+        <div class="up-name">${u.name} <span class="up-pips">${pips}</span></div>
+        <div class="up-desc">now: ${u.desc(u.vals[lvl])}${maxed ? "" : " → next: " + u.desc(u.vals[lvl + 1])}</div>
+      </div>${btn}</div>`;
+  }).join("");
+  $("shop").innerHTML = `<div id="shop-panel">
+    <div id="shop-head">
+      <div id="shop-title">SHIP TERMINAL</div>
+      <div id="shop-money">₡ ${state.money}</div>
+      <button id="shop-close">×</button>
+    </div>
+    <div id="shop-sub">XenoHarvest Corp. deducts upgrades from your pay. Naturally.</div>
+    <div id="shop-rows">${rows}</div>
+  </div>`;
+  $("shop-close").addEventListener("click", closeShop);
+  for (const b of document.querySelectorAll(".up-buy[data-k]")) {
+    b.addEventListener("click", () => {
+      const k = b.dataset.k;
+      const cost = UPGRADES[k].costs[state.lv[k]];
+      if (state.money < cost) return;
+      state.money -= cost;
+      state.lv[k]++;
+      applyLevels();
+      saveGame();
+      updateHUD();
+      renderShop();
+      showMsg(`${UPGRADES[k].name} upgraded — ${UPGRADES[k].desc(UPGRADES[k].vals[state.lv[k]])}.`);
+    });
+  }
+}
+function openShop() {
+  if (shopOpen) return;
+  shopOpen = true;
+  renderShop();
+  $("shop").classList.remove("hidden");
+}
+function closeShop() {
+  shopOpen = false;
+  $("shop").classList.add("hidden");
+}
+$("shop").addEventListener("click", (e) => { if (e.target.id === "shop") closeShop(); });
+window.addEventListener("keydown", (e) => {
+  if (e.code === "KeyE" && state.mode === "play") {
+    if (shopOpen) closeShop();
+    else if (Math.hypot(player.position.x, player.position.z) < 7) openShop();
+  }
+  if (e.code === "Escape") closeShop();
+});
+
 window.GAME = state; // debug/test handle
 window.GAME_POS = () => ({ x: player.position.x, z: player.position.z });
 window.DIAG = () => {
@@ -629,6 +743,7 @@ function updateShipZone(dt) {
       state.money += total;
       showMsg(`Sold ${state.basket.length} fruit for ₡${total}. The Corp thanks you. Sort of.`);
       state.basket = [];
+      saveGame();
       updateHUD();
     }
   }
@@ -673,7 +788,9 @@ let sawTarget = null;
 function updateSaw(dt) {
   const target = recalling ? null : nearestTree();
   const btn = $("btn-action");
-  btn.classList.toggle("hidden", !target);
+  const atShip = Math.hypot(player.position.x, player.position.z) < 7;
+  btn.classList.toggle("hidden", !target && !atShip);
+  btn.textContent = target ? "SAW" : "SHOP";
   if (target && !state.hintedSaw) {
     state.hintedSaw = true;
     showMsg("Hold SAW (or Space) to cut the tree — the fruit is yours.");
@@ -715,7 +832,7 @@ function tick() {
   const t = clock.getElapsedTime();
   gameTime = t;
 
-  if (state.mode === "play" && !recalling) {
+  if (state.mode === "play" && !recalling && !shopOpen) {
     const mx = input.x, mz = input.z;
     const mlen = Math.hypot(mx, mz);
     if (mlen > 0.08) {
@@ -734,14 +851,16 @@ function tick() {
       drainBattery(dt * 0.1);
     }
     updateSaw(dt);
-    updateShipZone(dt);
-    updateHUD();
     const targetRot = state.facing;
     let dr = targetRot - player.rotation.y;
     while (dr > Math.PI) dr -= Math.PI * 2;
     while (dr < -Math.PI) dr += Math.PI * 2;
     player.rotation.y += dr * Math.min(1, dt * 12);
     updateCamera(dt, false);
+  }
+  if (state.mode === "play" && !recalling) {
+    updateShipZone(dt);
+    updateHUD();
   }
   updateFlying(dt);
   updateFalling(dt);

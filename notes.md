@@ -66,3 +66,14 @@ fell), fruitless trees 40%→25% (first felled tree having no fruit felt bad), s
 service zone 5.5→7 (clearing-edge trees made the sale zone annoying to enter).
 Verified full loop headless: saw → 3 fruit → walk back (with steering around trees;
 head-on tree collision is a hard stop by design) → auto-sale ₡12 → recharge to 100%.
+
+## 2026-08-05 — Ship terminal (upgrades)
+
+Six upgrade tracks as a bottom-sheet terminal at the ship: Battery Cells (100→500),
+Basket Rig (10→50), Plasma Saw (1×→6.5× cut), Suit Armor (0→80% damage block),
+Sonic Pulser (L1 installs the weapon — dangers land next), Environmental Unit
+(L1 = Ember Reach, L2 = The Hush; zones enforced next stage). Escalating costs,
+level pips, contextual next-level preview. Action button is contextual now: SAW near
+a tree, SHOP in the ship zone; E/Esc on keyboard. Money + levels persist in
+localStorage (alienfruit-save-v1); battery refills each session. Verified headless:
+buy → effect applied → survives reload.
