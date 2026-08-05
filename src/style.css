@@ -64,6 +64,13 @@ body { font-family: "Avenir Next", "Segoe UI", system-ui, sans-serif; color: #e8
 .up-buy:disabled { background: rgba(120, 110, 160, 0.25); color: #7a72a0; }
 .up-buy.maxed { background: rgba(90, 220, 180, 0.2); color: #8ef5df; }
 
+#btn-pulse { position: absolute; right: 44px; bottom: calc(150px + env(safe-area-inset-bottom)); width: 72px; height: 72px; border-radius: 50%; border: none; font: inherit; font-weight: 800; font-size: 13px; letter-spacing: 0.08em; color: #0a1a2a; background: radial-gradient(circle at 35% 30%, #9df2ff, #3e9fcf); box-shadow: 0 0 20px rgba(80, 200, 255, 0.5), 0 4px 0 rgba(10, 50, 80, 0.85); pointer-events: auto; cursor: pointer; }
+#btn-pulse:active { transform: translateY(3px); }
+#btn-pulse.cooling { filter: grayscale(0.8) brightness(0.6); }
+
+#dmg-vignette { position: absolute; inset: 0; pointer-events: none; opacity: 0; background: radial-gradient(ellipse at center, transparent 55%, rgba(255, 40, 30, 0.55) 100%); transition: opacity 0.12s ease; }
+#dmg-vignette.show { opacity: 1; }
+
 @media (min-width: 900px) and (hover: hover) {
   #joystick { opacity: 0.35; }
 }

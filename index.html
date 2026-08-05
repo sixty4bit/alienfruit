@@ -73,6 +73,13 @@ body { font-family: "Avenir Next", "Segoe UI", system-ui, sans-serif; color: #e8
 .up-buy:disabled { background: rgba(120, 110, 160, 0.25); color: #7a72a0; }
 .up-buy.maxed { background: rgba(90, 220, 180, 0.2); color: #8ef5df; }
 
+#btn-pulse { position: absolute; right: 44px; bottom: calc(150px + env(safe-area-inset-bottom)); width: 72px; height: 72px; border-radius: 50%; border: none; font: inherit; font-weight: 800; font-size: 13px; letter-spacing: 0.08em; color: #0a1a2a; background: radial-gradient(circle at 35% 30%, #9df2ff, #3e9fcf); box-shadow: 0 0 20px rgba(80, 200, 255, 0.5), 0 4px 0 rgba(10, 50, 80, 0.85); pointer-events: auto; cursor: pointer; }
+#btn-pulse:active { transform: translateY(3px); }
+#btn-pulse.cooling { filter: grayscale(0.8) brightness(0.6); }
+
+#dmg-vignette { position: absolute; inset: 0; pointer-events: none; opacity: 0; background: radial-gradient(ellipse at center, transparent 55%, rgba(255, 40, 30, 0.55) 100%); transition: opacity 0.12s ease; }
+#dmg-vignette.show { opacity: 1; }
+
 @media (min-width: 900px) and (hover: hover) {
   #joystick { opacity: 0.35; }
 }
@@ -103,6 +110,8 @@ body { font-family: "Avenir Next", "Segoe UI", system-ui, sans-serif; color: #e8
     <div id="hud-msg"></div>
     <div id="joystick"><div id="joystick-knob"></div></div>
     <button id="btn-action" class="hidden">SAW</button>
+    <button id="btn-pulse" class="hidden">PULSE</button>
+    <div id="dmg-vignette"></div>
   </div>
 
   <div id="shop" class="hidden"></div>
@@ -313,6 +322,8 @@ const fruitMats = TIERS.map(
 
 const trees = new Map(); // "cx,cz" -> { group, x, z, r, tier, fruits, cut, dmg, ... }
 const felled = new Map(); // "cx,cz" -> game time when felled (stump until regrow)
+const mines = new Map(), minesSeen = new Set();
+const stalkers = new Map(), stalkersSeen = new Set();
 const REGROW_S = 120;
 const stumpGeo = new THREE.CylinderGeometry(0.26, 0.4, 0.5, 7);
 
@@ -399,15 +410,37 @@ function updateTreeField(px, pz) {
         const stump = trees.get(key);
         if (stump && stump.cut) { scene.remove(stump.group); trees.delete(key); }
       }
-      if (trees.has(key)) continue;
       const wx = cx * CELL + CELL / 2, wz = cz * CELL + CELL / 2;
-      if (Math.hypot(wx - px, wz - pz) < SPAWN_R) spawnTree(cx, cz, key);
+      const inRange = Math.hypot(wx - px, wz - pz) < SPAWN_R;
+      if (inRange && !trees.has(key)) spawnTree(cx, cz, key);
+      if (inRange && !mines.has(key) && !minesSeen.has(key)) {
+        spawnMine(cx, cz, key);
+        minesSeen.add(key);
+      }
+      if (inRange && !stalkers.has(key) && !stalkersSeen.has(key)) {
+        spawnStalker(cx, cz, key);
+        stalkersSeen.add(key);
+      }
     }
   }
   for (const [key, t] of trees) {
     if (Math.hypot(t.x - px, t.z - pz) > SPAWN_R + 8) {
       scene.remove(t.group);
       trees.delete(key);
+    }
+  }
+  for (const [key, m] of mines) {
+    if (Math.hypot(m.x - px, m.z - pz) > SPAWN_R + 8) {
+      scene.remove(m.mesh);
+      mines.delete(key);
+      minesSeen.delete(key);
+    }
+  }
+  for (const [key, s] of stalkers) {
+    if (Math.hypot(s.x - px, s.z - pz) > SPAWN_R + 20) {
+      scene.remove(s.group);
+      stalkers.delete(key);
+      stalkersSeen.delete(key);
     }
   }
 }
@@ -533,6 +566,9 @@ const input = { x: 0, z: 0, action: false };
   btn.addEventListener("pointerup", btnUp);
   btn.addEventListener("pointercancel", btnUp);
   btn.addEventListener("pointerleave", btnUp);
+
+  $("btn-pulse").addEventListener("pointerdown", (e) => { e.preventDefault(); firePulse(); });
+  window.addEventListener("keydown", (e) => { if (e.code === "KeyF") firePulse(); });
 }
 
 // ---------- Game state ----------
@@ -661,6 +697,9 @@ window.addEventListener("keydown", (e) => {
 
 window.GAME = state; // debug/test handle
 window.GAME_POS = () => ({ x: player.position.x, z: player.position.z });
+window.TELEPORT = (x, z) => { player.position.set(x, 0, z); updateTreeField(x, z); };
+window.APPLY = applyLevels;
+window.DIAG2 = () => ({ trees: trees.size, mines: mines.size, stalkers: stalkers.size, tier: currentTier });
 window.DIAG = () => {
   let best = null, bestD = 1e9;
   for (const t of trees.values()) {
@@ -718,14 +757,19 @@ function collide(nx, nz) {
 
 // ---------- Camera ----------
 const camOffset = new THREE.Vector3(0, 27, 14.5);
+let camShake = 0;
 function updateCamera(dt, snap) {
   const target = new THREE.Vector3().copy(player.position).add(camOffset);
   if (snap) camera.position.copy(target);
   else camera.position.lerp(target, 1 - Math.pow(0.0005, dt));
+  if (camShake > 0.002) {
+    camera.position.x += (Math.random() - 0.5) * camShake;
+    camera.position.z += (Math.random() - 0.5) * camShake;
+    camShake *= Math.pow(0.001, dt);
+  }
   camera.lookAt(player.position.x, 0.8, player.position.z);
 }
 updateCamera(0, true);
-updateTreeField(player.position.x, player.position.z);
 
 // ---------- Saw progress ring ----------
 const ringGroup = new THREE.Group();
@@ -824,7 +868,16 @@ function fellTree(tree) {
   felled.set(tree.key, gameTime);
   ringGroup.visible = false;
   for (const fruit of [...tree.fruits]) launchFruit(fruit, tree);
+  if (pet && tree.fruits.length && Math.random() < 0.25) {
+    // The glowbug shakes a bonus fruit loose.
+    const extra = tree.fruits[0].clone();
+    extra.position.copy(tree.fruits[0].position);
+    tree.group.add(extra);
+    launchFruit(extra, tree);
+    showMsg("Your glowbug shook loose a bonus fruit!", 2200);
+  }
   tree.fruits = [];
+  rollTreasure(tree);
   const away = new THREE.Vector3(tree.x - player.position.x, 0, tree.z - player.position.z).normalize();
   falling.push({ tree, t: 0, axis: new THREE.Vector3(-away.z, 0, away.x), done: false });
 }
@@ -846,6 +899,271 @@ function updateFalling(dt) {
       falling.splice(i, 1);
     }
   }
+}
+
+// ---------- Damage ----------
+let vignetteTimer = 0;
+function damagePlayer(amount) {
+  const taken = amount * (1 - (state.armor || 0));
+  drainBattery(taken);
+  $("dmg-vignette").classList.add("show");
+  clearTimeout(vignetteTimer);
+  vignetteTimer = setTimeout(() => $("dmg-vignette").classList.remove("show"), 220);
+  camShake = Math.min(0.5, camShake + 0.25);
+}
+
+// ---------- Spore mines ----------
+const mineGeo = new THREE.SphereGeometry(0.55, 10, 8);
+const mineMat = new THREE.MeshLambertMaterial({ color: 0x7a3aa8, emissive: 0xb040ff, emissiveIntensity: 0.5 });
+
+function spawnMine(cx, cz, key) {
+  // Mines live in cells without trees; density grows with distance.
+  if (treeAtCell(cx, cz)) return;
+  const x = cx * CELL + CELL / 2 + (hash2(cx, cz, 30) - 0.5) * 4;
+  const z = cz * CELL + CELL / 2 + (hash2(cx, cz, 31) - 0.5) * 4;
+  const r = Math.hypot(x, z);
+  if (r < CLEAR_R + 4) return;
+  const tier = tierAt(r);
+  const density = 0.05 + tier * 0.03;
+  if (hash2(cx, cz, 32) > density) return;
+  const mesh = new THREE.Mesh(mineGeo, mineMat.clone());
+  mesh.scale.y = 0.55;
+  mesh.position.set(x, 0.28, z);
+  scene.add(mesh);
+  mines.set(key, { mesh, x, z, tier, t: hash2(cx, cz, 33) * 10 });
+}
+
+function explodeMine(key, m, hurts) {
+  mines.delete(key);
+  scene.remove(m.mesh);
+  for (let i = 0; i < 14; i++) spawnSpark(m.x, 0.6, m.z, 0xb040ff);
+  const d = Math.hypot(player.position.x - m.x, player.position.z - m.z);
+  if (hurts && d < 3.2) {
+    damagePlayer((16 + m.tier * 8) * (1 - d / 3.6));
+    showMsg("Spore mine! The suit filters taste like burnt raisins.", 2600);
+  }
+}
+
+function updateMines(t) {
+  for (const [key, m] of mines) {
+    m.mesh.scale.setScalar(1 + Math.sin(t * 3 + m.t) * 0.1);
+    m.mesh.scale.y *= 0.55;
+    const d = Math.hypot(player.position.x - m.x, player.position.z - m.z);
+    if (d < 1.25) explodeMine(key, m, true);
+  }
+}
+
+// ---------- Stalkers ----------
+const stalkerBodyGeo = new THREE.IcosahedronGeometry(0.55, 0);
+const stalkerEyeGeo = new THREE.SphereGeometry(0.09, 6, 6);
+
+function spawnStalker(cx, cz, key) {
+  const x = cx * CELL + CELL / 2 + (hash2(cx, cz, 40) - 0.5) * 4;
+  const z = cz * CELL + CELL / 2 + (hash2(cx, cz, 41) - 0.5) * 4;
+  const r = Math.hypot(x, z);
+  if (r < 38) return; // inner belt is safe
+  const tier = tierAt(r);
+  if (hash2(cx, cz, 42) > 0.022 + tier * 0.012) return;
+  let count = 0;
+  for (const s of stalkers.values()) count++;
+  if (count >= 4) return;
+  const group = new THREE.Group();
+  const body = new THREE.Mesh(
+    stalkerBodyGeo,
+    new THREE.MeshLambertMaterial({ color: 0x2a1a3a, emissive: 0x5a2080, emissiveIntensity: 0.35 })
+  );
+  body.position.y = 0.55;
+  group.add(body);
+  for (const side of [-1, 1]) {
+    const eye = new THREE.Mesh(
+      stalkerEyeGeo,
+      new THREE.MeshLambertMaterial({ color: 0xffffff, emissive: 0xffd040, emissiveIntensity: 1.4 })
+    );
+    eye.position.set(side * 0.2, 0.75, 0.42);
+    group.add(eye);
+  }
+  group.position.set(x, 0, z);
+  scene.add(group);
+  stalkers.set(key, { group, x, z, tier, key, mode: "idle", stun: 0, biteCd: 0, wanderA: hash2(cx, cz, 43) * 6.28 });
+}
+
+function updateStalkers(dt, t) {
+  for (const [key, s] of stalkers) {
+    const px = player.position.x, pz = player.position.z;
+    const d = Math.hypot(px - s.x, pz - s.z);
+    if (s.stun > 0) {
+      s.stun -= dt;
+      s.group.rotation.y += dt * 9;
+      continue;
+    }
+    s.biteCd = Math.max(0, s.biteCd - dt);
+    let speed = 0;
+    let tx = 0, tz = 0;
+    const playerSafe = Math.hypot(px, pz) < CLEAR_R + 2;
+    if (d < 13 && !playerSafe && s.biteCd <= 0) {
+      s.mode = "chase";
+      tx = px - s.x; tz = pz - s.z;
+      speed = 2.6 + s.tier * 0.35;
+    } else {
+      s.mode = "idle";
+      s.wanderA += dt * 0.4;
+      tx = Math.cos(s.wanderA); tz = Math.sin(s.wanderA);
+      speed = 0.7;
+    }
+    const len = Math.hypot(tx, tz) || 1;
+    s.x += (tx / len) * speed * dt;
+    s.z += (tz / len) * speed * dt;
+    // hop
+    s.group.position.set(s.x, Math.abs(Math.sin(t * 6 + s.wanderA)) * 0.22, s.z);
+    s.group.lookAt(px, 0.4, pz);
+    if (d < 1.1 && s.biteCd <= 0) {
+      damagePlayer(14 + s.tier * 7);
+      showMsg("A stalker got a bite in! It seemed pleased.", 2600);
+      s.biteCd = 3.2;
+      // retreat hop
+      s.x -= ((px - s.x) / (d || 1)) * 3;
+      s.z -= ((pz - s.z) / (d || 1)) * 3;
+    }
+  }
+}
+
+// ---------- Sonic pulser ----------
+let pulseCd = 0;
+const pulseRings = [];
+function firePulse() {
+  if (!state.pulser || pulseCd > 0 || state.battery < 9 || shopOpen) return;
+  pulseCd = 2.4;
+  drainBattery(8);
+  const ring = new THREE.Mesh(
+    new THREE.RingGeometry(0.72, 0.85, 40),
+    new THREE.MeshBasicMaterial({ color: 0x7fdfff, transparent: true, opacity: 0.55, side: THREE.DoubleSide, depthWrite: false })
+  );
+  ring.rotation.x = -Math.PI / 2;
+  ring.position.set(player.position.x, 0.35, player.position.z);
+  scene.add(ring);
+  pulseRings.push({ mesh: ring, t: 0 });
+  const range = 4.2 + state.pulser * 0.9;
+  for (const [key, m] of [...mines]) {
+    if (Math.hypot(m.x - player.position.x, m.z - player.position.z) < range) explodeMine(key, m, false);
+  }
+  for (const s of stalkers.values()) {
+    const d = Math.hypot(s.x - player.position.x, s.z - player.position.z);
+    if (d < range + 1.5) {
+      s.stun = 2.2 + state.pulser * 0.5;
+      const kx = (s.x - player.position.x) / (d || 1), kz = (s.z - player.position.z) / (d || 1);
+      s.x += kx * (5 + state.pulser);
+      s.z += kz * (5 + state.pulser);
+      if (state.pulser >= 3 && d < range * 0.6) {
+        // Overcharged pulse pops stalkers into credits.
+        scene.remove(s.group);
+        stalkers.delete(s.key);
+        const goo = 25 + s.tier * 15;
+        state.money += goo;
+        saveGame();
+        showMsg(`Stalker dissolved into ₡${goo} of exotic goo. Don't ask.`, 2600);
+      }
+    }
+  }
+}
+function updatePulses(dt) {
+  pulseCd = Math.max(0, pulseCd - dt);
+  const btn = $("btn-pulse");
+  btn.classList.toggle("hidden", !state.pulser || state.mode !== "play");
+  btn.classList.toggle("cooling", pulseCd > 0);
+  for (let i = pulseRings.length - 1; i >= 0; i--) {
+    const p = pulseRings[i];
+    p.t += dt;
+    const k = p.t / 0.55;
+    if (k >= 1) {
+      scene.remove(p.mesh);
+      p.mesh.geometry.dispose();
+      pulseRings.splice(i, 1);
+      continue;
+    }
+    const s = 1 + k * 11;
+    p.mesh.scale.setScalar(s);
+    p.mesh.material.opacity = 0.85 * (1 - k);
+  }
+}
+
+// ---------- Treasures ----------
+function rollTreasure(tree) {
+  const [cx, cz] = tree.key.split(",").map(Number);
+  const roll = hash2(cx, cz, 50);
+  if (roll < 0.07) {
+    state.battery = Math.min(state.batteryMax, state.battery + state.batteryMax * 0.3);
+    for (let i = 0; i < 10; i++) spawnSpark(tree.x, 1.2, tree.z, 0x50ff90);
+    showMsg("A battery cell was lodged in the trunk! +30% charge.", 2800);
+  } else if (roll < 0.12) {
+    const bonus = [15, 35, 80, 180, 400][tree.tier];
+    state.money += bonus;
+    saveGame();
+    for (let i = 0; i < 10; i++) spawnSpark(tree.x, 1.2, tree.z, 0xffd75c);
+    showMsg(`An alien relic! The Corp wires you ₡${bonus} and asks no questions.`, 2800);
+  } else if (roll < 0.14 && !pet) {
+    hatchPet(tree.x, tree.z);
+  }
+}
+
+// ---------- Pet: the glowbug ----------
+let pet = null;
+function hatchPet(x, z) {
+  const group = new THREE.Group();
+  const body = new THREE.Mesh(
+    new THREE.SphereGeometry(0.22, 10, 8),
+    new THREE.MeshLambertMaterial({ color: 0x40e8a0, emissive: 0x40e8a0, emissiveIntensity: 0.9 })
+  );
+  body.position.y = 0.5;
+  group.add(body);
+  const glow = new THREE.Sprite(
+    new THREE.SpriteMaterial({ map: glowTex, color: 0x60ffc0, transparent: true, opacity: 0.6, depthWrite: false })
+  );
+  glow.scale.set(1.6, 1.6, 1);
+  glow.position.y = 0.5;
+  group.add(glow);
+  group.position.set(x, 0, z);
+  scene.add(group);
+  pet = { group, x, z };
+  showMsg("Something hatched from that tree… and it likes you. A glowbug joins you!", 3600);
+}
+function updatePet(dt, t) {
+  if (!pet) return;
+  const tx = player.position.x - 1.1, tz = player.position.z - 1.1;
+  pet.x += (tx - pet.x) * Math.min(1, dt * 3.5);
+  pet.z += (tz - pet.z) * Math.min(1, dt * 3.5);
+  pet.group.position.set(pet.x, Math.sin(t * 4) * 0.15 + 0.15, pet.z);
+}
+
+// ---------- Zones ----------
+let currentTier = 0, zoneWarnCd = 0;
+const ZONE_FOG = [0x0a0518, 0x0d0522, 0x14081e, 0x260a08, 0xbcc8d8];
+const zoneFogColor = new THREE.Color(ZONE_FOG[0]);
+function updateZones(dt) {
+  const r = Math.hypot(player.position.x, player.position.z);
+  const tier = tierAt(r);
+  if (tier !== currentTier) {
+    currentTier = tier;
+    const need = tier === 3 ? 1 : tier === 4 ? 2 : 0;
+    if (need > state.envUnit) {
+      showMsg(`— ${TIERS[tier].name} — hostile atmosphere! Env Unit L${need} required. Suit venting charge!`, 3800);
+    } else {
+      showMsg(`— ${TIERS[tier].name} —`, 2600);
+    }
+  }
+  const need = tier === 3 ? 1 : tier === 4 ? 2 : 0;
+  if (need > state.envUnit) {
+    drainBattery(dt * 5.5);
+    zoneWarnCd -= dt;
+    if (zoneWarnCd <= 0) {
+      zoneWarnCd = 6;
+      showMsg("⚠ Suit venting charge — turn back or upgrade the Env Unit!", 2400);
+    }
+  }
+  zoneFogColor.lerp(new THREE.Color(ZONE_FOG[tier]), Math.min(1, dt * 1.5));
+  scene.fog.color.copy(zoneFogColor);
+  scene.background.copy(zoneFogColor);
+  if (tier === 4) { scene.fog.near = 14; scene.fog.far = 38; }
+  else { scene.fog.near = 26; scene.fog.far = 54; }
 }
 
 // ---------- HUD ----------
@@ -956,6 +1274,7 @@ function updateSaw(dt) {
 }
 
 // ---------- Main loop ----------
+updateTreeField(player.position.x, player.position.z);
 const clock = new THREE.Clock();
 function tick() {
   requestAnimationFrame(tick);
@@ -991,8 +1310,13 @@ function tick() {
   }
   if (state.mode === "play" && !recalling) {
     updateShipZone(dt);
+    updateMines(t);
+    updateStalkers(dt, t);
+    updateZones(dt);
     updateHUD();
   }
+  updatePulses(dt);
+  updatePet(dt, t);
   updateFlying(dt);
   updateFalling(dt);
   updateSparks(dt);

@@ -77,3 +77,29 @@ level pips, contextual next-level preview. Action button is contextual now: SAW 
 a tree, SHOP in the ship zone; E/Esc on keyboard. Money + levels persist in
 localStorage (alienfruit-save-v1); battery refills each session. Verified headless:
 buy → effect applied → survives reload.
+
+## 2026-08-05 — Treasures, dangers, pulser, extreme zones
+
+**Dangers.** Spore mines: purple pulsing blobs in treeless cells (density 5%→14% with
+tier), proximity-triggered, radial damage with falloff. Stalkers: hopping spiky critters
+beyond r=38, chase within 13u, bite (14+7/tier), then back off 3.2s; they refuse to
+enter the clearing. All damage hits the battery (the suit IS the health bar), reduced by
+armor; red vignette + camera shake feedback.
+
+**Sonic Pulser.** Tap PULSE / F: expanding ground ring, 8 charge, 2.4s cooldown.
+Detonates mines harmlessly at range, knocks stalkers back + stuns; at L3+ close-range
+stalkers dissolve into credits. Not installed until bought — the button only exists
+once the upgrade does.
+
+**Treasures on felling** (deterministic per tree): 7% battery cell (+30% charge),
+5% relic (₡15→400 by tier), 2% mystery egg → a glowbug pet hatches, follows you, and
+sometimes shakes a bonus fruit loose. One glowbug at a time.
+
+**Zones.** Fog/background color lerps by tier (Ember Reach burns dark red, The Hush is
+a pale whiteout with fog closing to 14/38). Entering t3 without Env Unit L1 (or t4
+without L2) vents 5.5 charge/s with repeating warnings — a soft gate that punishes
+greed but allows smash-and-grab raids.
+
+Fixed a TDZ crash (camShake used by the boot updateCamera call before its let ran) —
+moved declaration up. Verified headless: zone warning + venting drain (90→73 in 3s),
+pulse fires and costs 8, mines/stalkers stream with the world, no console errors.
