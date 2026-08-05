@@ -229,10 +229,23 @@ function spawnTree(cx, cz, key) {
   canopy.position.y = height + cs * 0.35;
   group.add(canopy);
 
-  // Fruit: ~60% of trees carry 1-4 glowing fruits tucked in the canopy.
+  // Rare singing trees glow, hum when you approach, and carry double fruit.
+  const singing = hash2(cx, cz, 60) < 0.015;
+  if (singing) {
+    const halo = new THREE.Sprite(
+      new THREE.SpriteMaterial({ map: glowTex, color: 0xaffff0, transparent: true, opacity: 0.5, depthWrite: false })
+    );
+    halo.name = "halo";
+    halo.scale.set(cs * 3.2, cs * 3.2, 1);
+    halo.position.y = height + cs * 0.35;
+    group.add(halo);
+  }
+
+  // Fruit: most trees carry 1-4 glowing fruits tucked in the canopy.
   const fruits = [];
   const fh = hash2(cx, cz, 7);
-  const nFruit = fh < 0.25 ? 0 : 1 + Math.floor(hash2(cx, cz, 8) * 4);
+  let nFruit = fh < 0.25 ? 0 : 1 + Math.floor(hash2(cx, cz, 8) * 4);
+  if (singing) nFruit = Math.max(4, nFruit * 2);
   for (let i = 0; i < nFruit; i++) {
     const a = hash2(cx + i, cz, 9) * Math.PI * 2;
     const rr = cs * (0.55 + hash2(cx, cz + i, 10) * 0.45);
@@ -252,7 +265,7 @@ function spawnTree(cx, cz, key) {
   scene.add(group);
   // hpS: seconds of sawing (at saw power 1) to fell this tree.
   trees.set(key, {
-    group, x, z, r, tier, fruits, cut: false, sway: h2 * 10,
+    group, x, z, r, tier, fruits, cut: false, sway: h2 * 10, singing, singStep: 0, singCd: 0,
     key, height, dmg: 0, hpS: 1.4 + tier * 1.5 + h1 * 0.6, falling: null,
   });
 }
@@ -530,6 +543,7 @@ function renderShop() {
       state.lv[k]++;
       applyLevels();
       saveGame();
+      Sfx.upgrade();
       updateHUD();
       renderShop();
       showMsg(`${UPGRADES[k].name} upgraded — ${UPGRADES[k].desc(UPGRADES[k].vals[state.lv[k]])}.`);
@@ -578,6 +592,7 @@ window.DIAG = () => {
 };
 
 $("btn-start").addEventListener("click", () => {
+  Sfx.ensure();
   $("title-screen").classList.add("fading");
   setTimeout(() => $("title-screen").classList.add("hidden"), 950);
   $("hud").classList.remove("hidden");
@@ -712,6 +727,7 @@ function updateFlying(dt) {
       flying.splice(i, 1);
       if (state.basket.length < state.basketCap) {
         state.basket.push({ value: TIERS[f.tier].value, tier: f.tier });
+        Sfx.fruit(f.tier);
         if (state.basket.length === state.basketCap) showMsg("Basket full — haul it back to the ship!");
       } else {
         showMsg("Basket overflowing — that one got away.");
@@ -737,6 +753,8 @@ function fellTree(tree) {
     showMsg("Your glowbug shook loose a bonus fruit!", 2200);
   }
   tree.fruits = [];
+  Sfx.fall();
+  if (tree.singing) showMsg("The singing tree falls silent… but what a haul.", 3000);
   rollTreasure(tree);
   const away = new THREE.Vector3(tree.x - player.position.x, 0, tree.z - player.position.z).normalize();
   falling.push({ tree, t: 0, axis: new THREE.Vector3(-away.z, 0, away.x), done: false });
@@ -761,11 +779,104 @@ function updateFalling(dt) {
   }
 }
 
+// ---------- Audio (all synthesized, no assets) ----------
+const Sfx = (() => {
+  let ctx = null, master = null, sawGain = null, muted = false;
+  function ensure() {
+    if (!ctx) {
+      ctx = new (window.AudioContext || window.webkitAudioContext)();
+      master = ctx.createGain();
+      master.gain.value = 0.45;
+      master.connect(ctx.destination);
+      // Ambient pad: two detuned triangles through a slow-wobbling lowpass.
+      const filt = ctx.createBiquadFilter();
+      filt.type = "lowpass";
+      filt.frequency.value = 220;
+      const padGain = ctx.createGain();
+      padGain.gain.value = 0.05;
+      filt.connect(padGain).connect(master);
+      for (const f of [55, 55.6, 82.4]) {
+        const o = ctx.createOscillator();
+        o.type = "triangle";
+        o.frequency.value = f;
+        o.connect(filt);
+        o.start();
+      }
+      const lfo = ctx.createOscillator();
+      lfo.frequency.value = 0.07;
+      const lfoGain = ctx.createGain();
+      lfoGain.gain.value = 120;
+      lfo.connect(lfoGain).connect(filt.frequency);
+      lfo.start();
+      // Saw loop: sawtooth + noise, gated by sawGain.
+      sawGain = ctx.createGain();
+      sawGain.gain.value = 0;
+      const sawFilt = ctx.createBiquadFilter();
+      sawFilt.type = "bandpass";
+      sawFilt.frequency.value = 900;
+      sawFilt.Q.value = 2;
+      const so = ctx.createOscillator();
+      so.type = "sawtooth";
+      so.frequency.value = 110;
+      so.connect(sawFilt).connect(sawGain).connect(master);
+      so.start();
+      const so2 = ctx.createOscillator();
+      so2.type = "square";
+      so2.frequency.value = 57;
+      so2.connect(sawFilt);
+      so2.start();
+    }
+    if (ctx.state === "suspended") ctx.resume();
+  }
+  function env(freq, type, dur, vol, sweepTo) {
+    if (!ctx || muted) return;
+    const o = ctx.createOscillator();
+    o.type = type;
+    o.frequency.value = freq;
+    if (sweepTo) o.frequency.exponentialRampToValueAtTime(sweepTo, ctx.currentTime + dur);
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(vol, ctx.currentTime);
+    g.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + dur);
+    o.connect(g).connect(master);
+    o.start();
+    o.stop(ctx.currentTime + dur + 0.05);
+  }
+  function noise(dur, vol) {
+    if (!ctx || muted) return;
+    const buf = ctx.createBuffer(1, ctx.sampleRate * dur, ctx.sampleRate);
+    const d = buf.getChannelData(0);
+    for (let i = 0; i < d.length; i++) d[i] = (Math.random() * 2 - 1) * (1 - i / d.length);
+    const src = ctx.createBufferSource();
+    src.buffer = buf;
+    const g = ctx.createGain();
+    g.gain.value = vol;
+    src.connect(g).connect(master);
+    src.start();
+  }
+  return {
+    ensure,
+    sawing(on) { if (sawGain) sawGain.gain.linearRampToValueAtTime(on && !muted ? 0.16 : 0, (ctx?.currentTime || 0) + 0.08); },
+    fruit(tier) { env(440 + tier * 110, "sine", 0.22, 0.25, 880 + tier * 220); },
+    fall() { env(120, "triangle", 0.5, 0.4, 40); noise(0.35, 0.2); },
+    sale() { [523, 659, 784, 1047].forEach((f, i) => setTimeout(() => env(f, "sine", 0.18, 0.22), i * 70)); },
+    hurt() { noise(0.25, 0.5); env(160, "sawtooth", 0.3, 0.3, 60); },
+    pulse() { env(900, "sine", 0.5, 0.3, 90); },
+    upgrade() { [392, 523, 659].forEach((f, i) => setTimeout(() => env(f, "triangle", 0.25, 0.25), i * 90)); },
+    treasure() { [660, 880, 1100, 1320].forEach((f, i) => setTimeout(() => env(f, "sine", 0.3, 0.18), i * 60)); },
+    sing(step) { env([392, 494, 587, 740][step % 4], "sine", 0.8, 0.12); },
+    toggleMute() { muted = !muted; if (muted && sawGain) sawGain.gain.value = 0; if (master) master.gain.value = muted ? 0 : 0.45; return muted; },
+  };
+})();
+$("btn-mute").addEventListener("click", () => {
+  $("btn-mute").textContent = Sfx.toggleMute() ? "🔇" : "🔊";
+});
+
 // ---------- Damage ----------
 let vignetteTimer = 0;
 function damagePlayer(amount) {
   const taken = amount * (1 - (state.armor || 0));
   drainBattery(taken);
+  Sfx.hurt();
   $("dmg-vignette").classList.add("show");
   clearTimeout(vignetteTimer);
   vignetteTimer = setTimeout(() => $("dmg-vignette").classList.remove("show"), 220);
@@ -894,6 +1005,7 @@ function firePulse() {
   if (!state.pulser || pulseCd > 0 || state.battery < 9 || shopOpen) return;
   pulseCd = 2.4;
   drainBattery(8);
+  Sfx.pulse();
   const ring = new THREE.Mesh(
     new THREE.RingGeometry(0.72, 0.85, 40),
     new THREE.MeshBasicMaterial({ color: 0x7fdfff, transparent: true, opacity: 0.55, side: THREE.DoubleSide, depthWrite: false })
@@ -953,14 +1065,17 @@ function rollTreasure(tree) {
   if (roll < 0.07) {
     state.battery = Math.min(state.batteryMax, state.battery + state.batteryMax * 0.3);
     for (let i = 0; i < 10; i++) spawnSpark(tree.x, 1.2, tree.z, 0x50ff90);
+    Sfx.treasure();
     showMsg("A battery cell was lodged in the trunk! +30% charge.", 2800);
   } else if (roll < 0.12) {
     const bonus = [15, 35, 80, 180, 400][tree.tier];
     state.money += bonus;
     saveGame();
     for (let i = 0; i < 10; i++) spawnSpark(tree.x, 1.2, tree.z, 0xffd75c);
+    Sfx.treasure();
     showMsg(`An alien relic! The Corp wires you ₡${bonus} and asks no questions.`, 2800);
   } else if (roll < 0.14 && !pet) {
+    Sfx.treasure();
     hatchPet(tree.x, tree.z);
   }
 }
@@ -992,6 +1107,44 @@ function updatePet(dt, t) {
   pet.x += (tx - pet.x) * Math.min(1, dt * 3.5);
   pet.z += (tz - pet.z) * Math.min(1, dt * 3.5);
   pet.group.position.set(pet.x, Math.sin(t * 4) * 0.15 + 0.15, pet.z);
+}
+
+// ---------- Meteor showers ----------
+const meteors = [];
+let nextShower = 75 + Math.random() * 60;
+function updateMeteors(dt, t) {
+  if (state.mode === "play" && t > nextShower) {
+    nextShower = t + 100 + Math.random() * 80;
+    showMsg("A meteor shower streaks across the sky. The forest hums back.", 3400);
+    for (let i = 0; i < 9; i++) {
+      setTimeout(() => {
+        const s = new THREE.Sprite(
+          new THREE.SpriteMaterial({ map: glowTex, color: 0xcfeaff, transparent: true, opacity: 0.9, depthWrite: false })
+        );
+        s.scale.set(2.4, 0.5, 1);
+        s.position.set(
+          player.position.x + (Math.random() - 0.5) * 50,
+          13 + Math.random() * 5,
+          player.position.z + (Math.random() - 0.5) * 50
+        );
+        s.userData.vel = new THREE.Vector3(-14 - Math.random() * 8, -3, 9 + Math.random() * 5);
+        s.userData.life = 1.4;
+        scene.add(s);
+        meteors.push(s);
+      }, i * 420 + Math.random() * 300);
+    }
+  }
+  for (let i = meteors.length - 1; i >= 0; i--) {
+    const m = meteors[i];
+    m.userData.life -= dt;
+    if (m.userData.life <= 0) {
+      scene.remove(m);
+      meteors.splice(i, 1);
+      continue;
+    }
+    m.position.addScaledVector(m.userData.vel, dt);
+    m.material.opacity = Math.min(0.9, m.userData.life);
+  }
 }
 
 // ---------- Zones ----------
@@ -1051,6 +1204,7 @@ function updateShipZone(dt) {
       const total = state.basket.reduce((s, f) => s + f.value, 0);
       state.money += total;
       showMsg(`Sold ${state.basket.length} fruit for ₡${total}. The Corp thanks you. Sort of.`);
+      Sfx.sale();
       state.basket = [];
       saveGame();
       updateHUD();
@@ -1105,6 +1259,7 @@ function updateSaw(dt) {
     showMsg("Hold SAW (or Space) to cut the tree — the fruit is yours.");
   }
   const sawing = target && (input.btnAction || input.keyAction) && state.battery > 0;
+  Sfx.sawing(!!sawing);
   if (sawing) {
     // Face the tree while cutting.
     state.facing = Math.atan2(target.x - player.position.x, target.z - player.position.z);
@@ -1181,11 +1336,24 @@ function tick() {
   updateFalling(dt);
   updateSparks(dt);
 
-  // Idle saw blade spin + tree sway
+  // Idle saw blade spin + tree sway + singing-tree halo/hum
   blade.rotation.x = t * 3;
   for (const tr of trees.values()) {
-    if (!tr.cut) tr.group.rotation.z = Math.sin(t * 0.7 + tr.sway) * 0.012;
+    if (tr.cut) continue;
+    tr.group.rotation.z = Math.sin(t * 0.7 + tr.sway) * 0.012;
+    if (tr.singing) {
+      const halo = tr.group.getObjectByName("halo");
+      if (halo) halo.material.opacity = 0.35 + Math.sin(t * 2.5 + tr.sway) * 0.2;
+      const d = Math.hypot(tr.x - player.position.x, tr.z - player.position.z);
+      tr.singCd -= dt;
+      if (d < 7 && tr.singCd <= 0 && state.mode === "play") {
+        tr.singCd = 1.1;
+        Sfx.sing(tr.singStep++);
+        if (tr.singStep === 1) showMsg("…is that tree singing to you?", 2600);
+      }
+    }
   }
+  updateMeteors(dt, t);
 
   // Spores drift and wrap around the player
   const pos = sporeGeo.attributes.position;

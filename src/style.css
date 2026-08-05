@@ -31,6 +31,7 @@ body { font-family: "Avenir Next", "Segoe UI", system-ui, sans-serif; color: #e8
 #meter-basket .meter-fill { background: linear-gradient(90deg, #ff9d47, #ffd75c); }
 .meter-label { position: relative; display: flex; align-items: center; justify-content: center; height: 100%; font-size: 12px; font-weight: 700; text-shadow: 0 1px 3px rgba(0,0,0,0.9); letter-spacing: 0.04em; }
 #hud-money { margin-left: auto; background: rgba(10, 5, 28, 0.72); border: 1px solid rgba(255, 205, 100, 0.4); border-radius: 999px; padding: 4px 14px; font-weight: 800; font-size: 15px; color: #ffd75c; text-shadow: 0 0 10px rgba(255, 190, 60, 0.5); }
+#btn-mute { pointer-events: auto; background: rgba(10, 5, 28, 0.72); border: 1px solid rgba(160, 140, 255, 0.35); border-radius: 999px; width: 34px; height: 28px; font-size: 14px; line-height: 1; cursor: pointer; padding: 0; }
 #hud-msg { position: absolute; top: calc(52px + env(safe-area-inset-top)); left: 0; right: 0; text-align: center; font-size: clamp(13px, 3.6vw, 17px); font-weight: 600; color: #e8e4ff; text-shadow: 0 0 12px rgba(150, 120, 255, 0.8), 0 1px 3px rgba(0,0,0,0.9); opacity: 0; transition: opacity 0.4s; padding: 0 20px; }
 #hud-msg.show { opacity: 1; }
 

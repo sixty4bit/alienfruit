@@ -103,3 +103,19 @@ greed but allows smash-and-grab raids.
 Fixed a TDZ crash (camShake used by the boot updateCamera call before its let ran) —
 moved declaration up. Verified headless: zone warning + venting drain (90→73 in 3s),
 pulse fires and costs 8, mines/stalkers stream with the world, no console errors.
+
+## 2026-08-05 — Audio, surprises, mobile QA, README
+
+**Audio** — fully synthesized WebAudio, zero assets: ambient pad (detuned triangles
+through an LFO-wobbled lowpass), gated sawtooth+square saw loop, and one-shot envelopes
+for fruit catch (pitch rises with tier), tree fall, coin arpeggio on sale, damage noise
+burst, pulser sweep, upgrade/treasure chimes. Mute toggle in the HUD. AudioContext
+starts on the BEGIN HARVEST tap (mobile autoplay rules).
+
+**Surprises** — Singing trees (1.5% of trees): pulsing halo, four-note hum as you
+approach, double fruit when felled. Meteor showers every ~100-180s: cosmetic streak
+sprites overhead plus a message. Both discovered, never explained upfront.
+
+**QA** — regression of the full loop still green after audio hooks (saw → 3 fruit →
+sell ₡12 → recharge). Verified at 320×568, 390×844, 1280×800: HUD wraps, controls fit,
+no console errors anywhere. Added README with play link and architecture notes.
