@@ -29,3 +29,19 @@ safe-area insets, touch-action none.
 - Dangers: spore mines, stalker critters. Weapon: Sonic Pulser (repels/stuns — not a shooter).
 - Treasures: rare relics/battery cells inside trees; occasional mystery egg (surprise hook).
 - Upgrades at ship: Battery, Basket, Saw, Armor, Pulser, Env Unit. localStorage persistence.
+
+## 2026-08-05 — World + movement
+
+Full world rewrite of game.js: tiled mossy ground plane + dirt clearing (CircleGeometry),
+retro rocket ship built from primitives with the gpt-image-2 hull texture, procedural
+tree field on a 6-unit hash grid (deterministic — same world every visit, seed 1337).
+Trees stream in/out within 44 units of the player; ~74% cell occupancy outside the
+11-unit clearing. Five distance tiers defined (Mosslight Belt → The Hush) controlling
+canopy tint, fruit color/value, and later tree HP.
+
+Player: little astronaut from primitives (suit, helmet, glowing visor, backpack basket,
+saw arm with idle-spinning blade). Virtual joystick (pointer events, capture, 44px throw)
++ WASD/arrows. Circle collision vs trees and ship hull. Camera: smooth-lerp follow at
+(0, 27, 14.5) — roughly 6 trees visible in each direction. Ambient spores drift and wrap
+in a box around the player. Verified in headless Chromium: no console errors,
+movement + tree streaming confirmed by screenshot at phone + desktop sizes.
